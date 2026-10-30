@@ -1,0 +1,15 @@
+cone_finder:
+  ros__parameters:
+    map_frame: FP_ENU0          # same as crl_commander's map_frame
+    robot_frame: base_link
+    switch_mode_service: /crl_commander/switch_mode
+    approach_distance: 3.0      # [m] "close enough" to the cone -> stop
+    stop_duration: 3.0          # [s] standing at the cone before marking it checked
+    checked_radius: 3.0         # [m] detections this close to a checked cone are ignored
+    goto_timeout: 120.0         # [s] give up on an unreachable cone (it is marked checked)
+    min_detections: 3           # detections needed before a cone is driven to
+    association_radius: 2.0     # [m] detections this close are the same cone
+    forget_after: 10.0          # [s] drop unconfirmed candidates not seen for this long
+    max_detection_range: 20.0   # [m] ignore farther detections (height-based range is poor)
+    goal_update_distance: 1.0   # [m] resend the goal if the cone estimate moved this much
+    rate: 5.0                   # [Hz]

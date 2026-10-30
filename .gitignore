@@ -1,0 +1,9 @@
+runs/
+data/
+models/
+*/__pycache__/
+scripts/.venv/
+runs_train.log
+scripts/uv.lock
+scripts/*.pt
+scripts/*.onnx

@@ -1,0 +1,8 @@
+cone_detector:
+  ros__parameters:
+    score_threshold: 0.4    # input size is read from the model
+    nms_threshold: 0.5      # only used for models exported without built-in NMS
+    class_names: ['cone']
+    cone_height: 0.5        # [m] tip to ground, used to estimate cone distance
+    rectified: false        # true if the image topic is rectified (uses camera_info P, no distortion)
+    gpu_device: 0           # ONNX Runtime CUDA device (0 = GTX 1050 on the T490)
