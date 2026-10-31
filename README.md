@@ -88,18 +88,28 @@ head `[1, 4+nc, anchors]` (NMS done in the node) and `end2end=True` exports `[1,
 
 ## cone_finder: visiting cones with crl_commander
 
-`cone_finder` keeps `crl_commander` in `explore` and sends it to every new cone:
+`cone_finder` keeps `crl_commander` exploring (`mode:=explore`, default) or following a route
+(`mode:=route`) and sends it to every new cone:
 
 ```
-EXPLORE --confirmed unchecked cone--> GOTO (cone as /operator_goal) --within approach_distance--> STOP
-STOP --stop_duration--> cone marked checked --> EXPLORE
-GOTO --goto_timeout--> cone marked checked (unreachable) --> EXPLORE
+BASE --confirmed unchecked cone--> GOTO (cone as /operator_goal) --within approach_distance--> STOP
+STOP --stop_duration--> cone marked checked --> BASE
+GOTO --goto_timeout--> cone marked checked (unreachable) --> BASE
 ```
 
 ```bash
 ros2 launch cone_detector cone_detector.launch.py image:=/camera/image camera_info:=/camera/camera_info
 ros2 launch cone_detector cone_finder.launch.py      # crl_commander must already be running
+ros2 launch cone_detector cone_finder.launch.py mode:=route   # + commander_operator running
 ```
+
+- Route mode: BASE is `route`. The route `route_name` (`hrad`, from `routes_wgs/` with
+  `route_wgs: true`) is requested from `/commander_operator/operator_request`, at start and again
+  after every cone. commander_operator republishes the route and switches the commander to
+  `sequence` (or `wex_sequence`, its `sequence_mode` parameter). On (re)entry the commander starts
+  at the nearest waypoint, or the next one if the robot is already past it, so the route resumes
+  roughly where the robot left it. A route that passes near itself can resume on the wrong pass.
+  Launch the commander with `sequence_source:=topic` (default `file` ignores the route).
 
 - Cone poses from `/cone_detector/cone_poses` are transformed into `map_frame` (`FP_ENU0`, same as
   the commander), so TF must connect the camera frame to it.

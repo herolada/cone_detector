@@ -1,8 +1,12 @@
-"""Cone search on top of crl_commander: explore, and visit each newly seen cone once.
+"""Cone search on top of crl_commander: explore or follow a route, and visit each new cone once.
 
-    EXPLORE --confirmed unchecked cone--> GOTO --within approach_distance--> STOP
-    STOP --stop_duration--> mark cone checked --> EXPLORE
-    GOTO --goto_timeout--> mark cone checked (unreachable) --> EXPLORE
+    BASE --confirmed unchecked cone--> GOTO --within approach_distance--> STOP
+    STOP --stop_duration--> mark cone checked --> BASE
+    GOTO --goto_timeout--> mark cone checked (unreachable) --> BASE
+
+BASE is EXPLORE (mode 'explore', commander explores) or ROUTE (mode 'route', the route is
+requested from commander_operator, again after each cone, the commander then continues from the
+nearest waypoint ahead).
 
 Cones are tracked in the map frame. A cone counts once it was detected min_detections times
 within association_radius; detections within checked_radius of a checked cone are ignored.
@@ -12,6 +16,8 @@ import math
 import numpy as np
 import rclpy
 import tf2_geometry_msgs  # noqa: F401, registers PoseStamped with tf2_ros.Buffer.transform
+from commander_operator_interfaces.msg import OperatorRequest
+from commander_operator_interfaces.srv import SendOperatorRequest
 from crl_commander_interfaces.msg import OperatorGoal
 from crl_commander_interfaces.srv import SwitchMode
 from geometry_msgs.msg import PoseStamped
@@ -24,6 +30,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 
 EXPLORE, GOTO, STOP = SwitchMode.Request.MODE_EXPLORE, SwitchMode.Request.MODE_GOTO, \
     SwitchMode.Request.MODE_STOP
+ROUTE = 'route'
 
 
 class Cone:
@@ -90,32 +97,42 @@ class ConeFinder(Node):
         self.goto_timeout = p('goto_timeout', 120.0).value
         self.max_detection_range = p('max_detection_range', 20.0).value
         self.goal_update_distance = p('goal_update_distance', 1.0).value
+        self.base = p('mode', EXPLORE).value
+        if self.base not in (EXPLORE, ROUTE):
+            raise ValueError(f"mode must be '{EXPLORE}' or '{ROUTE}', not '{self.base}'")
+        self.route_request = OperatorRequest(
+            route=True, wgs=p('route_wgs', True).value, goal=p('route_name', 'hrad').value)
         self.memory = ConeMemory(
             association_radius=p('association_radius', 2.0).value,
             checked_radius=p('checked_radius', 3.0).value,
             min_detections=p('min_detections', 3).value,
             forget_after=p('forget_after', 10.0).value)
 
-        self.state = EXPLORE
+        self.state = self.base
         self.state_since = self.now()
         self.target = None
         self.sent_goal_xy = None
         # Commander mode we want vs. the one it last acknowledged; synced in tick() so a
         # failed or not-yet-available service is simply retried.
-        self.wanted_mode, self.acked_mode, self.request_pending = EXPLORE, None, False
+        self.wanted_mode, self.acked_mode, self.request_pending = self.base, None, False
 
         self.pending_cones = []  # detections waiting for their TF, see transform_cones()
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.switch_mode = self.create_client(
             SwitchMode, p('switch_mode_service', '/crl_commander/switch_mode').value)
+        self.operator_request = self.create_client(
+            SendOperatorRequest,
+            p('operator_request_service', '/commander_operator/operator_request').value)
         self.goal_pub = self.create_publisher(
             OperatorGoal, 'operator_goal', QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE))
         self.state_pub = self.create_publisher(String, '~/state', 10)
         self.marker_pub = self.create_publisher(MarkerArray, '~/markers', 10)
         self.create_subscription(PoseStamped, 'cone_poses', self.on_cone, 10)
         self.create_timer(1.0 / p('rate', 5.0).value, self.tick)
-        self.get_logger().info(f'Cone finder running, cones tracked in {self.map_frame}')
+        route = f", route '{self.route_request.goal}'" if self.base == ROUTE else ''
+        self.get_logger().info(
+            f'Cone finder running in {self.base} mode{route}, cones tracked in {self.map_frame}')
 
     def now(self):
         return self.get_clock().now().nanoseconds * 1e-9
@@ -177,16 +194,22 @@ class ConeFinder(Node):
             f'Cone at ({self.target.xy[0]:.1f}, {self.target.xy[1]:.1f}) checked ({reason})')
         self.memory.mark_checked(self.target.xy)
         self.target = None
-        self.set_state(EXPLORE)
+        self.set_state(self.base)
 
     def sync_mode(self):
         if self.wanted_mode == self.acked_mode or self.request_pending:
             return
-        if not self.switch_mode.service_is_ready():
-            self.get_logger().warning('Waiting for the switch_mode service',
+        mode = self.wanted_mode
+        # The route goes through commander_operator, which also switches the commander mode.
+        if mode == ROUTE:
+            client, request = self.operator_request, SendOperatorRequest.Request(
+                request=self.route_request)
+        else:
+            client, request = self.switch_mode, SwitchMode.Request(mode=mode)
+        if not client.service_is_ready():
+            self.get_logger().warning(f'Waiting for the {client.srv_name} service',
                                    throttle_duration_sec=5.0)
             return
-        mode = self.wanted_mode
         self.request_pending = True
 
         def done(future):
@@ -195,10 +218,11 @@ class ConeFinder(Node):
             if res is not None and res.success:
                 self.acked_mode = mode
             else:
-                self.get_logger().error(
-                    f'switch_mode {mode} failed: {res.message if res else future.exception()}')
+                reason = getattr(res, 'message', '') if res else future.exception()
+                self.get_logger().error(f'{client.srv_name} {mode} failed: {reason}',
+                                        throttle_duration_sec=5.0)
 
-        self.switch_mode.call_async(SwitchMode.Request(mode=mode)).add_done_callback(done)
+        client.call_async(request).add_done_callback(done)
 
     def tick(self):
         t = self.now()
@@ -207,7 +231,7 @@ class ConeFinder(Node):
         pose = self.robot_pose()
         if pose is not None:
             robot_xy, robot_z = pose
-            if self.state == EXPLORE:
+            if self.state == self.base:
                 self.target = self.memory.next_target(robot_xy)
                 if self.target is not None:
                     self.get_logger().info(

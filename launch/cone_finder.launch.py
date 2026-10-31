@@ -15,12 +15,17 @@ def generate_launch_description():
         DeclareLaunchArgument('cone_poses', default_value='/cone_detector/cone_poses'),
         DeclareLaunchArgument('operator_goal', default_value='/operator_goal',
                               description="crl_commander's GOTO goal topic"),
+        DeclareLaunchArgument('mode', default_value='explore',
+                              description="'explore', or 'route' to follow route_name via "
+                                          'commander_operator'),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
 
-        # Drives crl_commander (explore / goto / stop), which must already be running.
+        # Drives crl_commander (explore / route / goto / stop), which must already be running
+        # (and commander_operator in route mode).
         Node(
             package='cone_detector', executable='cone_finder', name='cone_finder',
-            parameters=[config, {'use_sim_time': LaunchConfiguration('use_sim_time')}],
+            parameters=[config, {'mode': LaunchConfiguration('mode'),
+                                 'use_sim_time': LaunchConfiguration('use_sim_time')}],
             remappings=[('cone_poses', LaunchConfiguration('cone_poses')),
                         ('operator_goal', LaunchConfiguration('operator_goal'))],
             output='screen',

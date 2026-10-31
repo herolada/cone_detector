@@ -16,6 +16,7 @@
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>tf2_geometry_msgs</exec_depend>
   <exec_depend>crl_commander_interfaces</exec_depend>
+  <exec_depend>commander_operator_interfaces</exec_depend>
   <exec_depend>cv_bridge</exec_depend>
   <exec_depend>python3-opencv</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
